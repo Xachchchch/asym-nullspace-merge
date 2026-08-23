@@ -22,7 +22,36 @@ cd asym-nullspace-merge
 pip install -r requirements.txt
 
 # Run mathematical validation tests
-pytest tests/
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+## 🛠️ CLI Usage & Adapter Export
+
+### 1. Export as a Standalone HuggingFace PEFT Adapter (~30–50MB)
+Merge plugin into master's null space and export standard `adapter_model.safetensors` + `adapter_config.json`:
+```bash
+python scripts/02_run_merge.py \
+  --master path/to/master_lora \
+  --plugins path/to/plugin_lora \
+  --output_dir ./merged_peft_adapter \
+  --export_adapter
+```
+
+Load the merged adapter immediately with HuggingFace PEFT:
+```python
+from peft import PeftModel
+from transformers import AutoModelForCausalLM
+
+model = AutoModelForCausalLM.from_pretrained("meta-llama/Meta-Llama-3-8B")
+model = PeftModel.from_pretrained(model, "./merged_peft_adapter")
+```
+
+### 2. Merge Directly into Base Model Weights
+```bash
+python scripts/02_run_merge.py \
+  --config configs/merge_reasoning_code.yaml \
+  --base_model meta-llama/Meta-Llama-3-8B \
+  --output_dir ./merged_llama3_model
 ```
 
 ## 📐 Mathematical Formulation

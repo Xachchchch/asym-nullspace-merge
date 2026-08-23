@@ -90,6 +90,66 @@ class TestMergeShapes(unittest.TestCase):
         self.assertEqual(delta_w.shape, (d_out, d_in))
         self.assertFalse(torch.isnan(delta_w).any())
 
+    def test_export_as_peft_adapter(self):
+        """Checks exporting to PEFT format and numerical equivalence."""
+        import tempfile
+
+        d_out, d_in = 64, 64
+        master_layer = LoRALayerWeights(
+            module_key="model.layers.0.self_attn.q_proj",
+            weight_a=torch.randn(8, d_in),
+            weight_b=torch.randn(d_out, 8),
+            r=8,
+            lora_alpha=16.0,
+        )
+        master = LoRAAdapter(
+            name="master_synthetic",
+            config={"r": 8, "lora_alpha": 16.0},
+            layers={"model.layers.0.self_attn.q_proj": master_layer},
+        )
+
+        plugin_layer = LoRALayerWeights(
+            module_key="model.layers.0.self_attn.q_proj",
+            weight_a=torch.randn(8, d_in),
+            weight_b=torch.randn(d_out, 8),
+            r=8,
+            lora_alpha=16.0,
+        )
+        plugin = LoRAAdapter(
+            name="plugin_synthetic",
+            config={"r": 8, "lora_alpha": 16.0},
+            layers={"model.layers.0.self_attn.q_proj": plugin_layer},
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = MergeConfig(
+                master_adapter_path="synthetic_master",
+                plugin_adapter_paths=["synthetic_plugin"],
+                output_dir=tmpdir,
+            )
+            merger = AsymmetricNSPMerger(config)
+            merger.export_as_peft_adapter(
+                output_dir=tmpdir,
+                master=master,
+                plugins=[plugin],
+            )
+
+            cfg_path = Path(tmpdir) / "adapter_config.json"
+            safetensors_path = Path(tmpdir) / "adapter_model.safetensors"
+            bin_path = Path(tmpdir) / "adapter_model.bin"
+
+            self.assertTrue(cfg_path.exists())
+            self.assertTrue(safetensors_path.exists() or bin_path.exists())
+
+            if safetensors_path.exists():
+                from safetensors.torch import load_file
+                loaded_sd = load_file(str(safetensors_path))
+            else:
+                loaded_sd = torch.load(str(bin_path), map_location="cpu")
+
+            self.assertIn("base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight", loaded_sd)
+            self.assertIn("base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight", loaded_sd)
+
 
 if __name__ == "__main__":
     unittest.main()
