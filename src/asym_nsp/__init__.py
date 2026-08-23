@@ -1,6 +1,7 @@
 """Asymmetric Null-Space Projection (NSP) for Data-Free LoRA Merging."""
 
 from asym_nsp.core import (
+    TwoSidedNullSpaceProjector,
     compute_subspace_basis,
     project_left_null_space,
     project_right_null_space,
@@ -18,6 +19,7 @@ from asym_nsp.merger import (
 
 __version__ = "0.1.0"
 __all__ = [
+    "TwoSidedNullSpaceProjector",
     "compute_subspace_basis",
     "project_left_null_space",
     "project_right_null_space",

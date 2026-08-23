@@ -218,3 +218,68 @@ def compute_orthogonality_metrics(
         "right_subspace_leakage": float(right_leakage.item()),
         "subspace_interference_cosine": float(interference.item()),
     }
+
+
+class TwoSidedNullSpaceProjector:
+    """Convenience class providing static projection methods for input/output manifolds."""
+
+    @staticmethod
+    def project_output_matrix(
+        B_master: torch.Tensor,
+        B_plugin: torch.Tensor,
+        rank_k: Optional[int] = None,
+        energy_threshold: Optional[float] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Projects B_plugin onto the left null-space of B_master.
+
+        Returns:
+            Tuple of (B_plugin_projected, U_master_basis).
+        """
+        U_master, _ = compute_subspace_basis(
+            B_master,
+            rank=rank_k,
+            energy_threshold=energy_threshold,
+            basis_side="left",
+        )
+        B_proj = project_left_null_space(B_plugin, U_master)
+        return B_proj, U_master
+
+    @staticmethod
+    def project_input_matrix(
+        A_master: torch.Tensor,
+        A_plugin: torch.Tensor,
+        rank_k: Optional[int] = None,
+        energy_threshold: Optional[float] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Projects A_plugin onto the right null-space of A_master.
+
+        Returns:
+            Tuple of (A_plugin_projected, V_master_basis).
+        """
+        V_master, _ = compute_subspace_basis(
+            A_master,
+            rank=rank_k,
+            energy_threshold=energy_threshold,
+            basis_side="right",
+        )
+        A_proj = project_right_null_space(A_plugin, V_master)
+        return A_proj, V_master
+
+    @staticmethod
+    def project(
+        B_master: torch.Tensor,
+        A_master: torch.Tensor,
+        B_plugin: torch.Tensor,
+        A_plugin: torch.Tensor,
+        rank_k: Optional[int] = None,
+        energy_threshold: Optional[float] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Applies two-sided null space projection."""
+        return project_two_sided_nsp(
+            B_plugin=B_plugin,
+            A_plugin=A_plugin,
+            B_master=B_master,
+            A_master=A_master,
+            rank_k=rank_k,
+            energy_threshold=energy_threshold,
+        )

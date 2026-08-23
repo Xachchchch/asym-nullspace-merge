@@ -33,6 +33,24 @@ $$B_p' = (I - U_k U_k^T) B_p, \quad A_p' = A_p (I - V_k V_k^T)$$
 
 $$\Delta W_{\text{merged}} = B_m A_m + B_p' A_p'$$
 
+## 📊 Visualizations & Empirical Verification
+
+Run the visualization script to generate empirical verification plots:
+
+```bash
+python scripts/04_visualize_spectra.py
+```
+
+### 1. Subspace Parameter Interference Heatmap
+Before projection, Master and Plugin adapters share significant subspace overlap ($|U_m^T B_p|$), leading to parameter corruption. After Two-Sided Asymmetric NSP, the overlap is strictly eliminated ($U_m^T B_p' \approx 0$):
+
+![Subspace Overlap Heatmap](assets/subspace_overlap_heatmap.png)
+
+### 2. Principal Angles Spectrum
+Cosine of principal angles between the Master and Plugin column spaces drops from high interference ($\cos \theta_i \gg 0$) straight down to strict orthogonality ($\cos \theta_i \equiv 0$):
+
+![Principal Angles Spectrum](assets/principal_angles_spectrum.png)
+
 ## 📄 Citation
 
 ```bibtex
