@@ -54,6 +54,20 @@ python scripts/02_run_merge.py \
   --output_dir ./merged_llama3_model
 ```
 
+### 3. End-to-End Real HuggingFace LoRA Merge & Inference Demo
+Run a full end-to-end test on public adapters (e.g. Qwen2.5-0.5B Math + Python):
+```bash
+# Run predefined preset (merges in ~2 seconds and runs dual-task test prompts)
+python scripts/05_hf_merge_demo.py --preset qwen2.5-0.5b
+
+# Or merge custom HuggingFace Hub adapters
+python scripts/05_hf_merge_demo.py --preset custom \
+  --base_model meta-llama/Meta-Llama-3-8B \
+  --master user/llama3-math-lora \
+  --plugin user/llama3-code-lora \
+  --output_dir ./outputs/llama3_math_code_adapter
+```
+
 ## 📐 Mathematical Formulation
 
 Given a Master LoRA $(B_m, A_m)$ and a Plugin LoRA $(B_p, A_p)$:
