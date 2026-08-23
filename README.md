@@ -15,8 +15,8 @@ Combining multiple specialized Low-Rank Adaptations (LoRA) into a single Base LL
 ## 🚀 Quick Start
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_GITHUB_USERNAME/asymmetric-lora-nsp.git
-cd asymmetric-lora-nsp
+git clone https://github.com/Xachchchch/asym-nullspace-merge.git
+cd asym-nullspace-merge
 
 # Install dependencies
 pip install -r requirements.txt
