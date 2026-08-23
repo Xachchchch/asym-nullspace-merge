@@ -115,9 +115,10 @@ def load_lora_adapter(
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
     elif not path.exists():
-        # Try fetching from huggingface_hub if available
+        # Try fetching from huggingface_hub
         try:
             from huggingface_hub import snapshot_download
+            print(f"Downloading adapter from HuggingFace Hub: {adapter_path_or_id}...")
             download_dir = snapshot_download(repo_id=str(adapter_path_or_id))
             path = Path(download_dir)
             cfg_file = path / "adapter_config.json"
@@ -125,8 +126,9 @@ def load_lora_adapter(
                 with open(cfg_file, "r", encoding="utf-8") as f:
                     config = json.load(f)
         except Exception as e:
-            # Fallback if offline or synthetic
-            pass
+            raise FileNotFoundError(
+                f"Could not find local path or download Hugging Face repository '{adapter_path_or_id}'. Details: {e}"
+            )
 
     state_dict = load_state_dict(path)
 
