@@ -1,0 +1,14 @@
+model_name_or_path: "meta-llama/Meta-Llama-3-8B"
+target_modules:
+  - "q_proj"
+  - "k_proj"
+  - "v_proj"
+  - "o_proj"
+  - "gate_proj"
+  - "up_proj"
+  - "down_proj"
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+dtype: "bfloat16"
+device: "cuda"

@@ -1,0 +1,25 @@
+master_adapter_path: "path/to/reasoning_math_lora"
+plugin_adapter_paths:
+  - "path/to/code_python_lora"
+
+output_dir: "./outputs/merged_reasoning_code"
+
+# Projection Hyperparameters
+energy_threshold: 0.99
+rank_k: null
+project_left: true
+project_right: true
+plugin_weights:
+  - 1.0
+
+target_modules:
+  - "q_proj"
+  - "k_proj"
+  - "v_proj"
+  - "o_proj"
+  - "gate_proj"
+  - "up_proj"
+  - "down_proj"
+
+device: "cpu"
+dtype: "float32"
