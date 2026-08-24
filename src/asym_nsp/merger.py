@@ -280,6 +280,10 @@ class AsymmetricNSPMerger:
                 b_blocks.append(torch.sqrt(torch.tensor(s_p, dtype=self.torch_dtype)) * b_proj)
                 a_blocks.append(torch.sqrt(torch.tensor(s_p, dtype=self.torch_dtype)) * a_proj)
 
+            # Normalise device/dtype before concatenation to handle mixed-device adapters
+            target_device = b_blocks[0].device
+            b_blocks = [b.to(device=target_device, dtype=self.torch_dtype) for b in b_blocks]
+            a_blocks = [a.to(device=target_device, dtype=self.torch_dtype) for a in a_blocks]
             B_concat = torch.cat(b_blocks, dim=1)
             A_concat = torch.cat(a_blocks, dim=0)
             total_r = B_concat.shape[1]

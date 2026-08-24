@@ -42,7 +42,9 @@ def compute_subspace_basis(
         total_energy = torch.sum(S**2)
         if total_energy > 0:
             cum_energy = torch.cumsum(S**2, dim=0) / total_energy
-            k_energy = int((cum_energy >= energy_threshold).nonzero(as_tuple=True)[0][0].item()) + 1
+            matched = (cum_energy >= energy_threshold).nonzero(as_tuple=True)[0]
+            # Fallback to max_k if threshold is never crossed (e.g. threshold ≥ 1.0 numerically)
+            k_energy = int(matched[0].item()) + 1 if len(matched) > 0 else max_k
         else:
             k_energy = 1
         k = min(k_energy, rank) if rank is not None else k_energy
