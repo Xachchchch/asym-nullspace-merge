@@ -150,51 +150,63 @@ def _simulate_baselines():
 
 
 def plot_baseline_comparison():
-    print("  [1/4] Generating baseline_comparison.png ...")
-    data = _simulate_baselines()
-    methods   = list(data.keys())
-    n_methods = len(methods)
+    print("  [1/4] Generating baseline_comparison.png (Synced with Table 1)...")
+    
+    # Строго берем цифры из нашей Таблицы 1 (Synthetic Invariance)
+    methods = ["Naive\nAddition", "Task\nArithmetic", "TIES\nMerging", "DARE", "Asym-NSP\n(Ours)"]
+    
+    # Master Preservation = 100% - Master Output Shift
+    # Naive: 6.16% shift -> 93.84% pres. TIES: 4.28% -> 95.72%. DARE: 3.92% -> 96.08%. NSP: 0.00% -> 100%
+    master_preservation = [93.8, 64.8, 95.7, 96.1, 100.0] 
+    
+    # Plugin Energy Retained (из таблицы)
+    plugin_energies = [100.0, 50.0, 86.4, 88.2, 99.6]
+    
+    # Latency (ms)
+    latencies = [0.0, 0.1, 2.1, 1.5, 8.2]
 
-    metrics = {
-        "Master Preservation\n(%, higher is better)": lambda d: 100 - d["master_err"],
-        "Plugin Energy\nRetained (%, higher is better)": lambda d: d["plugin_energy"],
-        "Additional\nLatency (ms, lower is better)":  lambda d: d["latency"],
-        "Relative Memory\n(x, lower is better)":      lambda d: d["memory"],
-    }
+    colors = [C_NAIVE, C_TA, C_TIES, C_DARE, C_NSP]
 
-    colors = [C_NSP, C_NAIVE, C_TA, C_TIES, C_DARE]
-
-    fig, axes = plt.subplots(1, 4, figsize=(18, 5.5))
+    fig, axes = plt.subplots(1, 3, figsize=(14, 5.5))
     fig.suptitle(
         "Baseline Comparison: Asymmetric NSP vs. Competing Methods",
         fontsize=14, fontweight="bold", y=1.02,
     )
 
-    for ax, (metric_label, fn) in zip(axes, metrics.items()):
-        vals = [fn(data[m]) for m in methods]
+    metrics = [
+        ("Master Preservation\n(%, higher is better)", master_preservation),
+        ("Plugin Energy Retained\n(%, higher is better)", plugin_energies),
+        ("Additional Latency\n(ms, lower is better)", latencies)
+    ]
+
+    for ax, (metric_label, vals) in zip(axes, metrics):
         bars = ax.bar(
-            range(n_methods), vals,
+            range(len(methods)), vals,
             color=colors, width=0.6, zorder=3,
             edgecolor="white", linewidth=0.8,
         )
         for bar, v in zip(bars, vals):
             ax.text(
                 bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + max(vals) * 0.01,
-                f"{v:.1f}", ha="center", va="bottom", fontsize=8, fontweight="bold",
+                bar.get_height() + max(vals) * 0.02,
+                f"{v:.1f}", ha="center", va="bottom", fontsize=9, fontweight="bold",
             )
-        bars[0].set_edgecolor("#001F5B")
-        bars[0].set_linewidth(2.0)
+        # Выделяем наш метод (последний столбец)
+        bars[-1].set_edgecolor("#001F5B")
+        bars[-1].set_linewidth(2.0)
 
-        ax.set_xticks(range(n_methods))
-        ax.set_xticklabels(methods, fontsize=8)
-        ax.set_ylabel(metric_label.split("\n")[0], fontsize=9)
-        ax.set_title(metric_label, fontsize=8.5, pad=8)
+        ax.set_xticks(range(len(methods)))
+        ax.set_xticklabels(methods, fontsize=9, fontweight="bold")
+        ax.set_ylabel(metric_label.split("\n")[0], fontsize=10)
+        ax.set_title(metric_label, fontsize=10, pad=8)
+        
+        if "Latency" not in metric_label:
+            ax.set_ylim(0, 115)
 
     axes[0].annotate(
-        "* Ours", xy=(0, 100 - data["Asym-NSP\n(Ours)"]["master_err"]),
-        xytext=(0.4, 97), fontsize=9, color=C_NSP, fontweight="bold",
-        arrowprops=dict(arrowstyle="->", color=C_NSP, lw=1.2),
+        "* Ours (Bit-Perfect)", xy=(4, 100),
+        xytext=(2.5, 105), fontsize=10, color=C_NSP, fontweight="bold",
+        arrowprops=dict(arrowstyle="->", color=C_NSP, lw=1.5),
     )
 
     plt.tight_layout()
