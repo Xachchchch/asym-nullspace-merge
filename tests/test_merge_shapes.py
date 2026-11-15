@@ -382,6 +382,7 @@ class TestMergeShapes(unittest.TestCase):
 
     def test_real_transformers_peft_end_to_end(self):
         """Tests end-to-end PeftModel loading & forward pass with tiny LLaMA for both homogeneous and heterogeneous adapters."""
+        import copy
         from transformers import LlamaConfig, LlamaForCausalLM
         from peft import PeftModel
 
@@ -394,7 +395,6 @@ class TestMergeShapes(unittest.TestCase):
             num_key_value_heads=4,
             max_position_embeddings=128,
         )
-        base_model = LlamaForCausalLM(cfg)
 
         d_out, d_in = 32, 32
         m_q = LoRALayerWeights("model.layers.0.self_attn.q_proj", torch.randn(4, d_in), torch.randn(d_out, 4), r=4, lora_alpha=8.0)
@@ -404,15 +404,32 @@ class TestMergeShapes(unittest.TestCase):
         master_homo = LoRAAdapter("m_homo", {"r": 4, "lora_alpha": 8.0}, {"model.layers.0.self_attn.q_proj": m_q})
         plugin_homo = LoRAAdapter("p_homo", {"r": 4, "lora_alpha": 8.0}, {"model.layers.0.self_attn.q_proj": p_q})
 
+        base_model_1 = LlamaForCausalLM(cfg)
+        base_model_1.eval()
+
         with tempfile.TemporaryDirectory() as tmpdir:
             merger = AsymmetricNSPMerger(MergeConfig(master_adapter_path="m", plugin_adapter_paths=["p"]))
+            merged_deltas = merger.merge_adapters(master=master_homo, plugins=[plugin_homo])
             merger.export_as_peft_adapter(tmpdir, master=master_homo, plugins=[plugin_homo])
 
-            peft_m = PeftModel.from_pretrained(base_model, tmpdir)
+            # Reference model: base_model_1 with merged_deltas manually added to its weights
+            ref_model_1 = copy.deepcopy(base_model_1)
+            ref_model_1.eval()
+            with torch.no_grad():
+                for mod_key, delta_w in merged_deltas.items():
+                    param = ref_model_1.get_submodule(mod_key).weight
+                    param.add_(delta_w.to(dtype=param.dtype, device=param.device))
+
+            peft_m = PeftModel.from_pretrained(base_model_1, tmpdir)
+            peft_m.eval()
             x = torch.randint(0, 100, (1, 8))
-            out = peft_m(x)
+            with torch.no_grad():
+                out = peft_m(x)
+                out_ref = ref_model_1(x)
+
             self.assertEqual(out.logits.shape, (1, 8, 100))
             self.assertFalse(torch.isnan(out.logits).any())
+            self.assertTrue(torch.allclose(out.logits, out_ref.logits, atol=1e-4, rtol=1e-4))
 
         # 2. Heterogeneous test: master adapts q_proj + k_proj, plugin only adapts q_proj
         m_k = LoRALayerWeights("model.layers.0.self_attn.k_proj", torch.randn(4, d_in), torch.randn(d_out, 4), r=4, lora_alpha=8.0)
@@ -424,8 +441,12 @@ class TestMergeShapes(unittest.TestCase):
             "model.layers.0.self_attn.q_proj": p_q,
         })
 
+        base_model_2 = LlamaForCausalLM(cfg)
+        base_model_2.eval()
+
         with tempfile.TemporaryDirectory() as tmpdir:
             merger = AsymmetricNSPMerger(MergeConfig(master_adapter_path="m", plugin_adapter_paths=["p"]))
+            merged_deltas_hetero = merger.merge_adapters(master=master_hetero, plugins=[plugin_hetero])
             merger.export_as_peft_adapter(tmpdir, master=master_hetero, plugins=[plugin_hetero])
 
             with open(Path(tmpdir) / "adapter_config.json") as f:
@@ -435,11 +456,24 @@ class TestMergeShapes(unittest.TestCase):
             self.assertEqual(adapter_cfg["rank_pattern"]["model.layers.0.self_attn.q_proj"], 8)
             self.assertEqual(adapter_cfg["rank_pattern"]["model.layers.0.self_attn.k_proj"], 4)
 
-            peft_hetero = PeftModel.from_pretrained(base_model, tmpdir)
+            # Reference model: base_model_2 with merged_deltas_hetero manually added to its weights
+            ref_model_2 = copy.deepcopy(base_model_2)
+            ref_model_2.eval()
+            with torch.no_grad():
+                for mod_key, delta_w in merged_deltas_hetero.items():
+                    param = ref_model_2.get_submodule(mod_key).weight
+                    param.add_(delta_w.to(dtype=param.dtype, device=param.device))
+
+            peft_hetero = PeftModel.from_pretrained(base_model_2, tmpdir)
+            peft_hetero.eval()
             x = torch.randint(0, 100, (1, 8))
-            out_hetero = peft_hetero(x)
+            with torch.no_grad():
+                out_hetero = peft_hetero(x)
+                out_hetero_ref = ref_model_2(x)
+
             self.assertEqual(out_hetero.logits.shape, (1, 8, 100))
             self.assertFalse(torch.isnan(out_hetero.logits).any())
+            self.assertTrue(torch.allclose(out_hetero.logits, out_hetero_ref.logits, atol=1e-4, rtol=1e-4))
 
 
 if __name__ == "__main__":
