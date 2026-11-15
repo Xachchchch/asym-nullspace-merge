@@ -26,13 +26,6 @@ PRESETS = {
         "test_math_prompt": "Problem: A farmer has 15 cows and 22 sheep. If 4 cows and 7 sheep are sold, how many animals remain on the farm? Let's calculate step by step:",
         "test_code_prompt": "def find_even_numbers(numbers: list) -> list:\n    \"\"\"Filter and return all even numbers from the list.\"\"\"\n",
     },
-    "tinyllama": {
-        "base_model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-        "master": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-        "plugin": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-        "test_math_prompt": "Question: If a car travels at 60 mph for 3.5 hours, how far did it go? Show steps:",
-        "test_code_prompt": "def reverse_string(s: str) -> str:\n    \"\"\"Reverse the input string.\"\"\"\n",
-    },
 }
 
 
@@ -120,7 +113,7 @@ def run_demo():
         master_adapter_path=master_id,
         plugin_adapter_paths=[plugin_id],
         output_dir=args.output_dir,
-        energy_threshold=0.99,
+        energy_threshold=1.0,
         export_adapter=True,
         device="cpu",  # CPU is blazing fast for low-rank SVD projections
     )

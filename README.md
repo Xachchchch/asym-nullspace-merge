@@ -3,7 +3,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch 2.x](https://img.shields.io/badge/PyTorch-2.x-EE4C2C.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/Tests-7%2F7%20Passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-16%2F16%20Passing-brightgreen.svg)](tests/)
 [![Data-Free](https://img.shields.io/badge/Data--Free-100%25-blueviolet.svg)](src/asym_nsp/core.py)
 [![CPU-Efficient](https://img.shields.io/badge/CPU-O(d%20%C2%B7%20r%5E2)-orange.svg)](src/asym_nsp/core.py)
 
@@ -61,7 +61,7 @@ cd asym-nullspace-merge
 pip install -r requirements.txt
 pip install -e .
 
-# 2. Run mathematical validation tests (7/7 unit tests)
+# 2. Run mathematical validation tests (16/16 unit tests)
 pytest tests/ -v
 
 # 3. Verify synthetic zero-interference theorems (numerical validation)
@@ -77,20 +77,21 @@ python scripts/05_hf_merge_demo.py --preset qwen2.5-0.5b
 
 Given a **Master** LoRA $(B_m, A_m, s_m)$ and a **Plugin** LoRA $(B_p, A_p, s_p)$ with rank-$k$ truncated SVD:
 
-$$B_m = U_m \Sigma_m V_m^T \implies U_k = U_m[:, :k], \quad A_m = U_A \Sigma_A V_A^T \implies V_k = V_A[:, :k]$$
+$$U_{m, k}, \Sigma_{m, k}, V_{m, k}^T = \text{SVD}_k(B_m), \qquad U_{A, k}, \Sigma_{A, k}, V_{A, k}^T = \text{SVD}_k(A_m)$$
 
 ### 1. Two-Sided Null-Space Projectors
-$$\mathcal{P}_{\perp}^{\text{out}} = I_{d_{\text{out}}} - U_k U_k^T \in \mathbb{R}^{d_{\text{out}} \times d_{\text{out}}}, \qquad \mathcal{P}_{\perp}^{\text{in}} = I_{d_{\text{in}}} - V_k V_k^T \in \mathbb{R}^{d_{\text{in}} \times d_{\text{in}}}$$
+$$\mathcal{P}_{\perp}^{\text{out}} = I_{d_{\text{out}}} - U_{m, k} U_{m, k}^T \in \mathbb{R}^{d_{\text{out}} \times d_{\text{out}}}, \qquad \mathcal{P}_{\perp}^{\text{in}} = I_{d_{\text{in}}} - V_{A, k} V_{A, k}^T \in \mathbb{R}^{d_{\text{in}} \times d_{\text{in}}}$$
 
 ### 2. Asymmetric Adapter Transformation
-$$B_p' = \mathcal{P}_{\perp}^{\text{out}} B_p = B_p - U_k (U_k^T B_p), \qquad A_p' = A_p \mathcal{P}_{\perp}^{\text{in}} = A_p - (A_p V_k) V_k^T$$
+$$B_p' = \mathcal{P}_{\perp}^{\text{out}} B_p = (I - U_{m, k} U_{m, k}^T) B_p = B_p - U_{m, k} (U_{m, k}^T B_p)$$
+$$A_p' = A_p \mathcal{P}_{\perp}^{\text{in}} = A_p (I - V_{A, k} V_{A, k}^T) = A_p - (A_p V_{A, k}) V_{A, k}^T$$
 
 ### 3. Non-Interference Proofs
-$$U_k^T B_p' = U_k^T (I - U_k U_k^T) B_p = (U_k^T - I_k U_k^T) B_p \equiv \mathbf{0}$$
-$$A_p' V_k = A_p (I - V_k V_k^T) V_k = A_p (V_k - V_k I_k) \equiv \mathbf{0}$$
+$$U_{m, k}^T B_p' = U_{m, k}^T (I - U_{m, k} U_{m, k}^T) B_p = (U_{m, k}^T - I_k U_{m, k}^T) B_p \equiv \mathbf{0}$$
+$$A_p' V_{A, k} = A_p (I - V_{A, k} V_{A, k}^T) V_{A, k} = A_p (V_{A, k} - V_{A, k} I_k) \equiv \mathbf{0}$$
 
 ### 4. Lossless Standalone PEFT Export
-$$\Delta W_{\text{merged}} = s_m B_m A_m + s_p B_p' A_p' \equiv \underbrace{\begin{bmatrix} \sqrt{s_m}\, B_m & \sqrt{s_p}\, B_p' \end{bmatrix}}_{B_{\text{merged}} \in \mathbb{R}^{d_{\text{out}} \times (r_m + r_p)}} \times \underbrace{\begin{bmatrix} \sqrt{s_m}\, A_m \\ \sqrt{s_p}\, A_p' \end{bmatrix}}_{A_{\text{merged}} \in \mathbb{R}^{(r_m + r_p) \times d_{\text{in}}}}$$
+$$\Delta W_{\text{merged}} = s_m B_m A_m + s_p B_p' A_p' \equiv \underbrace{\begin{bmatrix} \operatorname{sign}(s_m)\sqrt{|s_m|}\, B_m & \operatorname{sign}(s_p)\sqrt{|s_p|}\, B_p' \end{bmatrix}}_{B_{\text{merged}} \in \mathbb{R}^{d_{\text{out}} \times (r_m + r_p)}} \times \underbrace{\begin{bmatrix} \sqrt{|s_m|}\, A_m \\ \sqrt{|s_p|}\, A_p' \end{bmatrix}}_{A_{\text{merged}} \in \mathbb{R}^{(r_m + r_p) \times d_{\text{in}}}}$$
 
 This block-matrix identity holds with **zero approximation error**.
 
@@ -170,6 +171,7 @@ python scripts/02_run_merge.py \
   --master path/to/master_lora \
   --plugins path/to/plugin_lora \
   --output_dir ./merged_peft_adapter \
+  --energy_threshold 1.0 \
   --export_adapter
 ```
 
@@ -190,13 +192,29 @@ python scripts/02_run_merge.py \
   --output_dir ./merged_llama3_model
 ```
 
-### 3. Run Real-World TIES & DARE Baselines on Hardware
+### 3. Evaluate Merged Adapters and Models
+```bash
+# Evaluate merged PEFT adapter using lm-evaluation-harness
+python scripts/03_eval_benchmark.py \
+  --model_path meta-llama/Meta-Llama-3-8B \
+  --peft_adapter ./merged_peft_adapter \
+  --mode lm_eval \
+  --tasks gsm8k,humaneval
+
+# Or run prompt generation evaluation via YAML configuration
+python scripts/03_eval_benchmark.py \
+  --config configs/base_llama3.yaml \
+  --peft_adapter ./merged_peft_adapter \
+  --mode generate
+```
+
+### 4. Run Real-World TIES & DARE Baselines on Hardware
 ```bash
 # Merges real adapters with TIES and DARE algorithms onto base model
 python scripts/08_run_real_baselines.py --torch_dtype float16
 ```
 
-### 4. End-to-End Real HuggingFace Demo (Qwen2.5 / TinyLlama)
+### 5. End-to-End Real HuggingFace Demo (Qwen2.5)
 ```bash
 # Run Qwen2.5-0.5B preset (Math reasoning + Python coding)
 python scripts/05_hf_merge_demo.py --preset qwen2.5-0.5b
@@ -205,7 +223,7 @@ python scripts/05_hf_merge_demo.py --preset qwen2.5-0.5b
 python scripts/05_hf_merge_demo.py --preset qwen2.5-0.5b --skip_inference
 ```
 
-### 5. 100% Offline Local CPU Creation & Weight Inspection
+### 6. 100% Offline Local CPU Creation & Weight Inspection
 ```bash
 python scripts/06_create_and_inspect_demo.py
 ```
@@ -221,7 +239,7 @@ from asym_nsp import AsymmetricNSPMerger, MergeConfig
 config = MergeConfig(
     master_adapter_path="path/or/hub-id/master",
     plugin_adapter_paths=["path/or/hub-id/plugin"],
-    energy_threshold=0.99,   # retain 99% singular value energy
+    energy_threshold=1.0,    # 1.0 preserves 100% of Master directions (0.99 optional for extra plugin capacity)
     project_left=True,       # project B (output manifold)
     project_right=True,      # project A (input manifold)
     export_adapter=True,

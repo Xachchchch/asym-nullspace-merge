@@ -25,7 +25,7 @@ def create_sample_lora(
     base_model: str = "meta-llama/Meta-Llama-3-8B",
     num_layers: int = 4,
     d_model: int = 4096,
-    d_mlp: int = 11008,
+    d_mlp: int = 14336,
     r: int = 16,
     lora_alpha: float = 32.0,
     seed: int = 42,
@@ -119,7 +119,7 @@ def main():
         master_adapter_path=str(master_dir),
         plugin_adapter_paths=[str(plugin_dir)],
         output_dir=str(merged_dir),
-        energy_threshold=0.99,
+        energy_threshold=1.0,
         export_adapter=True,
         device="cpu",
     )

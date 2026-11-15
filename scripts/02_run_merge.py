@@ -30,13 +30,13 @@ def parse_args():
         "--plugins",
         type=str,
         nargs="+",
-        default=[],
+        default=None,
         help="One or more Plugin LoRA adapter directories or HuggingFace repo IDs.",
     )
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="./merged_output",
+        default=None,
         help="Destination directory for merged weights.",
     )
     parser.add_argument(
@@ -48,8 +48,8 @@ def parse_args():
     parser.add_argument(
         "--energy_threshold",
         type=float,
-        default=0.99,
-        help="Cumulative SVD energy threshold (default: 0.99).",
+        default=None,
+        help="Cumulative SVD energy threshold (default: 1.0).",
     )
     parser.add_argument(
         "--export_adapter",
@@ -66,13 +66,13 @@ def parse_args():
     parser.add_argument(
         "--lora_alpha",
         type=float,
-        default=32.0,
+        default=None,
         help="LoRA alpha for exported PEFT adapter (default: 32.0).",
     )
     parser.add_argument(
         "--device",
         type=str,
-        default="cpu",
+        default=None,
         help="Device to perform projections ('cpu' or 'cuda').",
     )
     args = parser.parse_args()
@@ -87,16 +87,32 @@ def main():
     if args.config:
         print(f"Loading configuration from {args.config}...")
         config = MergeConfig.from_yaml(args.config)
+        if args.master is not None:
+            config.master_adapter_path = args.master
+        if args.plugins is not None:
+            config.plugin_adapter_paths = args.plugins
+        if args.output_dir is not None:
+            config.output_dir = args.output_dir
+        if args.energy_threshold is not None:
+            config.energy_threshold = args.energy_threshold
+        if args.export_adapter:
+            config.export_adapter = True
+        if args.target_r is not None:
+            config.target_r = args.target_r
+        if args.lora_alpha is not None:
+            config.lora_alpha = args.lora_alpha
+        if args.device is not None:
+            config.device = args.device
     else:
         config = MergeConfig(
             master_adapter_path=args.master,
-            plugin_adapter_paths=args.plugins,
-            output_dir=args.output_dir,
-            energy_threshold=args.energy_threshold,
+            plugin_adapter_paths=args.plugins or [],
+            output_dir=args.output_dir if args.output_dir is not None else "./merged_output",
+            energy_threshold=args.energy_threshold if args.energy_threshold is not None else 1.0,
             export_adapter=args.export_adapter,
             target_r=args.target_r,
-            lora_alpha=args.lora_alpha,
-            device=args.device,
+            lora_alpha=args.lora_alpha if args.lora_alpha is not None else 32.0,
+            device=args.device if args.device is not None else "cpu",
         )
 
     print("\nInitializing Asymmetric NSP Merger...")
@@ -106,7 +122,7 @@ def main():
 
     merger = AsymmetricNSPMerger(config)
 
-    if args.export_adapter or config.export_adapter:
+    if config.export_adapter:
         print(f"\nExporting standalone PEFT adapter to {config.output_dir}...")
         merger.export_as_peft_adapter(
             output_dir=config.output_dir,

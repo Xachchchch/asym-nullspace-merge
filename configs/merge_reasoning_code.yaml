@@ -5,7 +5,9 @@ plugin_adapter_paths:
 output_dir: "./outputs/merged_reasoning_code"
 
 # Projection Hyperparameters
-energy_threshold: 0.99
+# energy_threshold: 1.0 preserves 100% of Master singular directions for zero degradation;
+# values < 1.0 (such as 0.99) trade slight protection for extra plugin capacity.
+energy_threshold: 1.0
 rank_k: null
 project_left: true
 project_right: true
@@ -21,5 +23,7 @@ target_modules:
   - "up_proj"
   - "down_proj"
 
+export_adapter: true
+lora_alpha: 32.0
 device: "cpu"
 dtype: "float32"

@@ -8,6 +8,7 @@ Supports:
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import List, Optional
 import torch
@@ -24,20 +25,32 @@ def evaluate_generation(
     prompts: dict,
     max_new_tokens: int = 128,
     device: str = "cpu",
+    peft_adapter: Optional[str] = None,
 ):
     """Runs generation test across sample domain prompts."""
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     print("\n" + "=" * 70)
     print(f"  RUNNING SAMPLE GENERATION EVALUATION: {model_path}")
+    if peft_adapter:
+        print(f"  PEFT Adapter: {peft_adapter}")
     print("=" * 70)
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         torch_dtype=torch.float16 if device == "cuda" else torch.float32,
         device_map="auto" if device == "cuda" else None,
     )
+
+    if peft_adapter:
+        from peft import PeftModel
+        print(f"Loading PEFT adapter from {peft_adapter}...")
+        model = PeftModel.from_pretrained(model, peft_adapter)
+        model.eval()
 
     results = {}
     for category, prompt in prompts.items():
@@ -68,23 +81,30 @@ def run_lm_eval(
     num_fewshot: int,
     batch_size: int,
     output_file: str,
+    peft_adapter: Optional[str] = None,
 ):
     """Runs lm-evaluation-harness benchmarks if installed."""
     print("=" * 70)
     print("  LM-EVALUATION-HARNESS BENCHMARK")
     print("=" * 70)
-    print(f"Model:     {model_path}")
-    print(f"Tasks:     {tasks}")
-    print(f"Few-shot:  {num_fewshot}")
+    print(f"Model:        {model_path}")
+    if peft_adapter:
+        print(f"PEFT Adapter: {peft_adapter}")
+    print(f"Tasks:        {tasks}")
+    print(f"Few-shot:     {num_fewshot}")
 
     try:
         import lm_eval
         from lm_eval import evaluator
 
+        model_args = f"pretrained={model_path},trust_remote_code=True"
+        if peft_adapter:
+            model_args += f",peft={peft_adapter}"
+
         print("\nRunning lm-eval benchmarks...")
         results = evaluator.simple_evaluate(
             model="hf",
-            model_args=f"pretrained={model_path},trust_remote_code=True",
+            model_args=model_args,
             tasks=tasks,
             num_fewshot=num_fewshot,
             batch_size=batch_size,
@@ -104,7 +124,8 @@ def run_lm_eval(
         print("To run formal lm-eval benchmarks, install dependencies:")
         print("    pip install lm-eval datasets accelerate")
         print("\nAlternatively, run quick generation evaluation without lm-eval:")
-        print(f"    python scripts/03_eval_benchmark.py --model_path {model_path} --mode generate")
+        peft_flag = f" --peft_adapter {peft_adapter}" if peft_adapter else ""
+        print(f"    python scripts/03_eval_benchmark.py --model_path {model_path}{peft_flag} --mode generate")
         return None
 
 
@@ -113,10 +134,22 @@ def parse_args():
         description="Evaluate base, individual, and merged models across benchmarks."
     )
     parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to YAML configuration file (e.g. configs/base_llama3.yaml or configs/merge_reasoning_code.yaml).",
+    )
+    parser.add_argument(
         "--model_path",
         type=str,
-        required=True,
-        help="Path to merged model directory or HuggingFace repo ID.",
+        default=None,
+        help="Path to merged model directory or base model on HuggingFace Hub.",
+    )
+    parser.add_argument(
+        "--peft_adapter",
+        type=str,
+        default=None,
+        help="Optional path or Hub ID to a standalone PEFT adapter.",
     )
     parser.add_argument(
         "--mode",
@@ -161,20 +194,35 @@ def parse_args():
 def main():
     args = parse_args()
 
+    model_path = args.model_path
+    peft_adapter = args.peft_adapter
+
+    if args.config:
+        import yaml
+        with open(args.config, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        if not model_path:
+            model_path = cfg.get("model_name_or_path") or cfg.get("base_model") or cfg.get("output_dir")
+
+    if not model_path:
+        sys.exit("Error: Either --model_path or --config must resolve to a valid model path.")
+
     if args.mode == "generate":
         evaluate_generation(
-            model_path=args.model_path,
+            model_path=model_path,
             prompts=SAMPLE_PROMPTS,
             device=args.device,
+            peft_adapter=peft_adapter,
         )
     else:
         task_list = [t.strip() for t in args.tasks.split(",") if t.strip()]
         run_lm_eval(
-            model_path=args.model_path,
+            model_path=model_path,
             tasks=task_list,
             num_fewshot=args.num_fewshot,
             batch_size=args.batch_size,
             output_file=args.output_file,
+            peft_adapter=peft_adapter,
         )
 
 
