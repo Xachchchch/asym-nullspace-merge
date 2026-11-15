@@ -16,6 +16,7 @@ class LoRALayerWeights:
     weight_b: torch.Tensor  # [d_out, r]
     r: int
     lora_alpha: float = 16.0
+    fan_in_fan_out: bool = False
 
     @property
     def scaling(self) -> float:
@@ -23,7 +24,10 @@ class LoRALayerWeights:
 
     def compute_delta_w(self) -> torch.Tensor:
         """Computes the full rank delta weight: scaling * (B @ A)."""
-        return self.scaling * torch.matmul(self.weight_b, self.weight_a)
+        prod = torch.matmul(self.weight_b, self.weight_a)
+        if self.fan_in_fan_out:
+            prod = prod.T
+        return self.scaling * prod
 
 
 @dataclass
@@ -35,6 +39,7 @@ class LoRAAdapter:
     base_model_name_or_path: Optional[str] = None
     default_r: int = 16
     default_alpha: float = 32.0
+    fan_in_fan_out: bool = False
 
     def get_layer(self, module_key: str) -> Optional[LoRALayerWeights]:
         return self.layers.get(module_key)
@@ -51,17 +56,13 @@ def _normalize_module_key(key: str) -> str:
     elif clean.startswith("base_model."):
         clean = clean[len("base_model."):]
 
-    # Remove trailing parameter designations
-    for suffix in [
-        ".lora_A.weight",
-        ".lora_B.weight",
-        ".lora_A.default.weight",
-        ".lora_B.default.weight",
-        ".weight",
-    ]:
-        if clean.endswith(suffix):
-            clean = clean[:-len(suffix)]
-            break
+    # Split before .lora_A or .lora_B to handle any adapter naming scheme
+    if ".lora_A" in clean:
+        clean = clean.split(".lora_A")[0]
+    elif ".lora_B" in clean:
+        clean = clean.split(".lora_B")[0]
+    elif clean.endswith(".weight"):
+        clean = clean[:-len(".weight")]
 
     return clean
 
@@ -135,6 +136,9 @@ def load_lora_adapter(
     default_r = config.get("r", 16)
     default_alpha = float(config.get("lora_alpha", 32.0))
     base_model = config.get("base_model_name_or_path")
+    fan_in_fan_out = bool(config.get("fan_in_fan_out", False))
+    alpha_pattern = config.get("alpha_pattern", {}) or {}
+    rank_pattern = config.get("rank_pattern", {}) or {}
 
     # Group tensors into A and B pairs per module
     tensors_a: Dict[str, torch.Tensor] = {}
@@ -159,12 +163,15 @@ def load_lora_adapter(
         w_a = tensors_a[mod]
         w_b = tensors_b[mod]
         r = w_a.shape[0]
+        short_name = mod.split(".")[-1]
+        mod_alpha = float(alpha_pattern.get(mod, alpha_pattern.get(short_name, default_alpha)))
         layers[mod] = LoRALayerWeights(
             module_key=mod,
             weight_a=w_a,
             weight_b=w_b,
             r=r,
-            lora_alpha=default_alpha,
+            lora_alpha=mod_alpha,
+            fan_in_fan_out=fan_in_fan_out,
         )
 
     return LoRAAdapter(
@@ -174,4 +181,5 @@ def load_lora_adapter(
         base_model_name_or_path=base_model,
         default_r=default_r,
         default_alpha=default_alpha,
+        fan_in_fan_out=fan_in_fan_out,
     )
