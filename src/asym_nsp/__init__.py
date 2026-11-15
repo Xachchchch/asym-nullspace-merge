@@ -18,6 +18,13 @@ from asym_nsp.merger import (
     AsymmetricNSPMerger,
     MergeConfig,
 )
+from asym_nsp.baselines import (
+    merge_naive_addition,
+    merge_task_arithmetic,
+    merge_ties,
+    merge_dare,
+    merge_lora_adapters_baseline,
+)
 
 __version__ = "0.1.0"
 __all__ = [
@@ -33,4 +40,9 @@ __all__ = [
     "load_lora_adapter",
     "AsymmetricNSPMerger",
     "MergeConfig",
+    "merge_naive_addition",
+    "merge_task_arithmetic",
+    "merge_ties",
+    "merge_dare",
+    "merge_lora_adapters_baseline",
 ]

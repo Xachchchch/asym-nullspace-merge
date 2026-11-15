@@ -1,94 +1,242 @@
-"""01_synthetic_verify.py: Synthetic mathematical verification of Asymmetric NSP."""
+"""01_synthetic_verify.py
+===========================================================
+Full reproducible Table 2 verification script for Asymmetric NSP.
+
+Setup:  d = 4096,  r_m = r_p = 16,  dtype = float32
+Methods compared:
+  1. Naive Addition
+  2. Task Arithmetic  (λ = 0.5)
+  3. TIES-Merging     (k = 20%, λ = 1.0)
+  4. DARE             (p = 0.5, TA λ = 0.5)
+  5. Asym-NSP Output-Only   (project_left=True,  project_right=False)
+  6. Asym-NSP Two-Sided     (project_left=True,  project_right=True)
+
+Metrics printed per method:
+  • Master Subspace Shift (%)  = ||U_m^T (y_merge - y_master)||_F / ||U_m^T y_master||_F * 100
+  • Master Full Output Shift (%) = ||y_merge - y_master||_F / ||y_master||_F * 100
+  • Left  Leakage ||U_m^T B_p'||_F   (Asym-NSP only; else N/A)
+  • Right Leakage ||A_p' V_A||_F     (Asym-NSP only; else N/A)
+  • Plugin Energy Retained (%)  = ||ΔW_plugin_out||_F^2 / ||ΔW_p||_F^2 * 100   (Eq. 7)
+===========================================================
+"""
 
 import sys
 from pathlib import Path
+
 import torch
 
-# Add src to pythonpath
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from asym_nsp.core import (
-    compute_orthogonality_metrics,
-    compute_subspace_basis,
-    project_two_sided_nsp,
+from asym_nsp.baselines import (
+    merge_dare,
+    merge_naive_addition,
+    merge_task_arithmetic,
+    merge_ties,
 )
+from asym_nsp.core import compute_subspace_basis, project_two_sided_nsp
 
 
-def run_synthetic_verification():
-    print("=" * 70)
-    print("  ASYMMETRIC NULL-SPACE PROJECTION (NSP): SYNTHETIC VERIFICATION")
-    print("=" * 70)
+# ── reproducible setup ────────────────────────────────────────────────────────
+torch.manual_seed(42)
 
-    torch.manual_seed(42)
-    d_model = 4096
-    r_master = 16
-    r_plugin = 16
+D       = 4096
+R_M     = 16
+R_P     = 16
+N_TEST  = 64          # test inputs for shift measurement
 
-    print(f"\nConfiguration:")
-    print(f"  • Hidden Dimension (d): {d_model}")
-    print(f"  • Master Rank (r_m):    {r_master}")
-    print(f"  • Plugin Rank (r_p):    {r_plugin}")
 
-    # Generate synthetic LoRA matrices
-    B_master = torch.randn(d_model, r_master)
-    A_master = torch.randn(r_master, d_model)
-    Delta_W_master = torch.matmul(B_master, A_master)
+def _make_loras(d=D, r_m=R_M, r_p=R_P, interference=0.5, seed=42):
+    """Generate correlated synthetic LoRA matrices."""
+    gen = torch.Generator()
+    gen.manual_seed(seed)
+    B_m = torch.randn(d, r_m, generator=gen)
+    A_m = torch.randn(r_m, d, generator=gen)
+    B_p = torch.randn(d, r_p, generator=gen) + interference * B_m[:, :r_p]
+    A_p = torch.randn(r_p, d, generator=gen) + interference * A_m[:r_p, :]
+    return B_m, A_m, B_p, A_p
 
-    B_plugin = torch.randn(d_model, r_plugin)
-    A_plugin = torch.randn(r_plugin, d_model)
-    Delta_W_plugin_raw = torch.matmul(B_plugin, A_plugin)
 
-    # 1. Naive Addition (Baseline)
-    Delta_W_naive = Delta_W_master + Delta_W_plugin_raw
+def run_verification():
+    print("=" * 78)
+    print("  ASYMMETRIC NSP — SYNTHETIC TABLE 2 VERIFICATION")
+    print("=" * 78)
+    print(f"\n  d = {D},  r_m = {R_M},  r_p = {R_P},  dtype = float32")
+    print(f"  Interference factor = 0.6  (B_p += 0.6 * B_m[:, :r_p], etc.)\n")
 
-    # 2. Two-Sided Asymmetric Null-Space Projection
-    B_plugin_proj, A_plugin_proj = project_two_sided_nsp(
-        B_plugin=B_plugin,
-        A_plugin=A_plugin,
-        B_master=B_master,
-        A_master=A_master,
+    B_m, A_m, B_p_raw, A_p_raw = _make_loras(interference=0.6, seed=42)
+
+    # ── Master delta and plugin raw delta ─────────────────────────────────────
+    dW_m   = B_m @ A_m          # [d, d]
+    dW_p   = B_p_raw @ A_p_raw  # [d, d]
+
+    # ── Master subspace bases for metric computation ───────────────────────────
+    U_m, _ = compute_subspace_basis(B_m, basis_side="left")   # [d, r_m]
+    V_A, _ = compute_subspace_basis(A_m, basis_side="right")  # [d, r_m]
+
+    # ── Test inputs aligned with Master's input subspace (span of V_A rows) ───
+    # x ∈ span(V_A):  x = coeff @ V_A^T  → shape [N_TEST, d]
+    torch.manual_seed(99)
+    coeffs    = torch.randn(N_TEST, R_M)
+    test_x    = coeffs @ V_A.T             # [N_TEST, d]
+
+    # Reference: Master-only output
+    y_master  = test_x @ dW_m.T            # [N_TEST, d]
+    # Master subspace component of reference output
+    y_master_sub = y_master @ U_m          # [N_TEST, r_m]
+
+    # ── Frobenius energy of raw plugin delta ──────────────────────────────────
+    dW_p_fro_sq = float(torch.sum(dW_p ** 2))
+
+    # ── Helper functions ──────────────────────────────────────────────────────
+    def _shift_metrics(dW_plugin_out):
+        """Compute subspace and full output shifts relative to Master-only."""
+        dW_total = dW_m + dW_plugin_out
+        y_merge  = test_x @ dW_total.T          # [N_TEST, d]
+        diff     = y_merge - y_master            # [N_TEST, d]
+        # subspace shift: project diff onto Master output subspace U_m
+        diff_sub = diff @ U_m                    # [N_TEST, r_m]
+        sub_shift  = (torch.norm(diff_sub, p="fro") /
+                      (torch.norm(y_master_sub, p="fro") + 1e-12)).item() * 100
+        full_shift = (torch.norm(diff, p="fro") /
+                      (torch.norm(y_master,     p="fro") + 1e-12)).item() * 100
+        return sub_shift, full_shift
+
+    def _plugin_energy_pct(dW_plugin_out):
+        """Squared Frobenius energy retained relative to raw plugin delta (Eq. 7)."""
+        en = float(torch.sum(dW_plugin_out ** 2))
+        return en / (dW_p_fro_sq + 1e-30) * 100.0
+
+    def _left_leakage(B_proj):
+        """||U_m^T B_p'||_F  (unnormalized)."""
+        return float(torch.norm(U_m.T @ B_proj, p="fro"))
+
+    def _right_leakage(A_proj):
+        """||A_p' V_A||_F  (unnormalized)."""
+        return float(torch.norm(A_proj @ V_A, p="fro"))
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Build all method results
+    # ══════════════════════════════════════════════════════════════════════════
+    results = {}
+
+    # 1. Naive Addition ────────────────────────────────────────────────────────
+    dW_naive = merge_naive_addition([dW_m, dW_p])
+    dW_naive_plugin = dW_naive - dW_m          # = dW_p (retained as-is)
+    sub, full = _shift_metrics(dW_naive_plugin)
+    results["Naive Addition"] = dict(
+        sub_shift=sub, full_shift=full,
+        left_leak="N/A", right_leak="N/A",
+        energy_pct=_plugin_energy_pct(dW_naive_plugin),
     )
-    Delta_W_plugin_proj = torch.matmul(B_plugin_proj, A_plugin_proj)
-    Delta_W_nsp = Delta_W_master + Delta_W_plugin_proj
 
-    # Evaluate Master Subspace Invariance
-    # Feed an input x aligned with Master's subspace
-    V_m, _ = compute_subspace_basis(A_master, basis_side="right")
-    test_input = torch.matmul(torch.randn(10, V_m.shape[1]), V_m.T)  # [10, d_model]
-
-    y_master_ground_truth = torch.matmul(test_input, Delta_W_master.T)
-    y_naive = torch.matmul(test_input, Delta_W_naive.T)
-    y_nsp = torch.matmul(test_input, Delta_W_nsp.T)
-
-    err_naive = torch.norm(y_naive - y_master_ground_truth) / torch.norm(y_master_ground_truth)
-    err_nsp = torch.norm(y_nsp - y_master_ground_truth) / torch.norm(y_master_ground_truth)
-
-    # Orthogonality Metrics
-    metrics = compute_orthogonality_metrics(
-        B_plugin_proj=B_plugin_proj,
-        A_plugin_proj=A_plugin_proj,
-        B_master=B_master,
-        A_master=A_master,
+    # 2. Task Arithmetic (λ=0.5) ───────────────────────────────────────────────
+    dW_ta = merge_task_arithmetic([dW_m, dW_p], scaling_lam=0.5)
+    dW_ta_plugin = dW_ta - 0.5 * dW_m         # plugin component after scaling
+    # For output shift: merged = dW_m + plugin_out, but TA gives 0.5*(dW_m+dW_p)
+    # so actual merged total:
+    sub, full = _shift_metrics(dW_ta - dW_m)
+    results["Task Arithmetic (λ=0.5)"] = dict(
+        sub_shift=sub, full_shift=full,
+        left_leak="N/A", right_leak="N/A",
+        energy_pct=_plugin_energy_pct(dW_ta - dW_m),
     )
 
-    print("\n" + "-" * 70)
-    print("RESULTS & COMPARISON")
-    print("-" * 70)
-    print(f"1. Naive LoRA Addition Interference: {err_naive.item() * 100:.3f}% master output shift")
-    print(f"2. Asymmetric NSP Output Shift:       {err_nsp.item() * 100:.6f}% (Zero Degradation Guarantee)")
-    print(f"\nOrthogonality Verification Metrics:")
-    print(f"  • Left Subspace Leakage (U^T B'):   {metrics['left_subspace_leakage']:.2e}")
-    print(f"  • Right Subspace Leakage (A' V):    {metrics['right_subspace_leakage']:.2e}")
-    print(f"  • Subspace Cosine Interference:     {metrics['subspace_interference_cosine']:.2e}")
+    # 3. TIES-Merging (k=20%, λ=1.0) ──────────────────────────────────────────
+    dW_ties = merge_ties([dW_m, dW_p], top_k_pct=20.0, scaling_lam=1.0)
+    sub, full = _shift_metrics(dW_ties - dW_m)
+    results["TIES-Merging (k=20%, λ=1.0)"] = dict(
+        sub_shift=sub, full_shift=full,
+        left_leak="N/A", right_leak="N/A",
+        energy_pct=_plugin_energy_pct(dW_ties - dW_m),
+    )
 
-    # Retained Plugin Energy
-    norm_orig = torch.norm(Delta_W_plugin_raw, p="fro")
-    norm_proj = torch.norm(Delta_W_plugin_proj, p="fro")
-    energy_retained = (norm_proj / norm_orig).item() * 100
-    print(f"  • Plugin Weight Energy Retained:    {energy_retained:.2f}%")
-    print("=" * 70)
-    print("✓ All mathematical invariance checks passed successfully.\n")
+    # 4. DARE (p=0.5, TA λ=0.5) ───────────────────────────────────────────────
+    dW_dare = merge_dare([dW_m, dW_p], drop_rate=0.5,
+                         base_method="task_arithmetic", scaling_lam=0.5, seed=42)
+    sub, full = _shift_metrics(dW_dare - dW_m)
+    results["DARE (p=0.5, TA λ=0.5)"] = dict(
+        sub_shift=sub, full_shift=full,
+        left_leak="N/A", right_leak="N/A",
+        energy_pct=_plugin_energy_pct(dW_dare - dW_m),
+    )
+
+    # 5. Asym-NSP Output-Only (project_left=True, project_right=False) ─────────
+    B_nsp_out, A_nsp_out = project_two_sided_nsp(
+        B_p_raw, A_p_raw, B_m, A_m,
+        project_left=True, project_right=False,
+    )
+    dW_nsp_out = B_nsp_out @ A_nsp_out
+    sub, full = _shift_metrics(dW_nsp_out)
+    results["Asym-NSP Output-Only"] = dict(
+        sub_shift=sub, full_shift=full,
+        left_leak=f"{_left_leakage(B_nsp_out):.4e}",
+        right_leak=f"{_right_leakage(A_nsp_out):.4e}",
+        energy_pct=_plugin_energy_pct(dW_nsp_out),
+    )
+
+    # 6. Asym-NSP Two-Sided (project_left=True, project_right=True) ───────────
+    B_nsp_2s, A_nsp_2s = project_two_sided_nsp(
+        B_p_raw, A_p_raw, B_m, A_m,
+        project_left=True, project_right=True,
+    )
+    dW_nsp_2s = B_nsp_2s @ A_nsp_2s
+    sub, full = _shift_metrics(dW_nsp_2s)
+    results["Asym-NSP Two-Sided"] = dict(
+        sub_shift=sub, full_shift=full,
+        left_leak=f"{_left_leakage(B_nsp_2s):.4e}",
+        right_leak=f"{_right_leakage(A_nsp_2s):.4e}",
+        energy_pct=_plugin_energy_pct(dW_nsp_2s),
+    )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Print results table
+    # ══════════════════════════════════════════════════════════════════════════
+    col_w = 30
+    h_sub   = "Mstr Sub-Shift(%)"
+    h_full  = "Mstr Full-Shift(%)"
+    h_left  = "Left Leak ||U_m^T B'||"
+    h_right = "Right Leak ||A' V_A||"
+    h_eng   = "Plugin Energy(%)"
+
+    sep = "-" * 110
+    print(sep)
+    print(f"{'Method':<{col_w}}  {h_sub:>19}  {h_full:>19}  {h_left:>22}  {h_right:>22}  {h_eng:>16}")
+    print(sep)
+    for method, m in results.items():
+        ll = m["left_leak"] if m["left_leak"] != "N/A" else "        N/A"
+        rl = m["right_leak"] if m["right_leak"] != "N/A" else "        N/A"
+        print(
+            f"{method:<{col_w}}  "
+            f"{m['sub_shift']:>19.4f}  "
+            f"{m['full_shift']:>19.4f}  "
+            f"{ll:>22}  "
+            f"{rl:>22}  "
+            f"{m['energy_pct']:>16.2f}"
+        )
+    print(sep)
+
+    print("\nLegend:")
+    print("  Mstr Sub-Shift(%)   = ||U_m^T(y_merge - y_master)||_F / ||U_m^T y_master||_F * 100")
+    print("  Mstr Full-Shift(%)  = ||y_merge - y_master||_F / ||y_master||_F * 100")
+    print("  Left Leak           = ||U_m^T B_p'||_F  (Asym-NSP only)")
+    print("  Right Leak          = ||A_p' V_A||_F    (Asym-NSP only)")
+    print("  Plugin Energy(%)    = ||ΔW_plugin_out||_F^2 / ||ΔW_p||_F^2 * 100  (Eq. 7)")
+    print("  For symmetric baselines: plugin_out = ΔW_merged − ΔW_m\n")
+
+    # Sanity assertions
+    nsp_2s = results["Asym-NSP Two-Sided"]
+    assert nsp_2s["sub_shift"] < 1e-3, \
+        f"Two-sided NSP subspace shift too large: {nsp_2s['sub_shift']:.6f}%"
+    assert nsp_2s["full_shift"] < 0.2, \
+        f"Two-sided NSP full output shift too large: {nsp_2s['full_shift']:.4f}%"
+
+    nsp_out = results["Asym-NSP Output-Only"]
+    assert nsp_out["sub_shift"] < 1e-3, \
+        f"Output-only NSP subspace shift too large: {nsp_out['sub_shift']:.6f}%"
+
+    print("✓ All mathematical invariance checks passed.\n")
+    print("=" * 78)
 
 
 if __name__ == "__main__":
-    run_synthetic_verification()
+    run_verification()
